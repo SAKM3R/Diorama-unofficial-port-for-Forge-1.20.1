@@ -9,7 +9,7 @@ import java.nio.ByteOrder;
 import org.lwjgl.system.MemoryUtil;
 
 // A MapTexture before 1.21.5: a raw OpenGL texture, set up the way vanilla's own textures are.
-final class GlIdTexture implements LegacyTexture {
+public final class GlIdTexture implements LegacyTexture {
 	private static final int TEXTURE_2D = 3553;
 	private final int id;
 
@@ -48,6 +48,21 @@ final class GlIdTexture implements LegacyTexture {
 		GlStateManager._texParameter(TEXTURE_2D, 10242, wrap);
 		GlStateManager._texParameter(TEXTURE_2D, 10243, wrap);
 		RenderSystem.setShaderTexture(slot, this.id);
+	}
+
+	/** Reads one mip level back from the GPU, for the diagnostics log. */
+	public int[] readBack(int level, int edge) {
+		ByteBuffer buffer = MemoryUtil.memAlloc(edge * edge * 4).order(ByteOrder.LITTLE_ENDIAN);
+		try {
+			GlStateManager._bindTexture(this.id);
+			GlStateManager._pixelStore(3333, 4);
+			org.lwjgl.opengl.GL11.glGetTexImage(TEXTURE_2D, level, 6408, 5121, buffer);
+			int[] out = new int[edge * edge];
+			buffer.asIntBuffer().get(out);
+			return out;
+		} finally {
+			MemoryUtil.memFree(buffer);
+		}
 	}
 
 	@Override
