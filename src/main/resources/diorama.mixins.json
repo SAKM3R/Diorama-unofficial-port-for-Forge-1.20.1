@@ -1,0 +1,21 @@
+{
+	"required": true,
+	"minVersion": "0.8",
+	"package": "dev.diorama.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"refmap": "diorama.refmap.json",
+	"client": [
+		"BiomeManagerAccessor",
+		"ChatComponentMixin",
+		"ClientChunkCacheMixin",
+		"ClientPacketListenerMixin",
+		"DeathPacketMixin",
+		"LevelChunkMixin",
+		"MinecraftMixin",
+		"RealmsServerMixin",
+		"SpriteContentsAccessor"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

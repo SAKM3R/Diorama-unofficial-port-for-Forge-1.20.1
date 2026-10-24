@@ -1,0 +1,29 @@
+modLoader = "javafml"
+loaderVersion = "[47,)"
+license = "MIT"
+issueTrackerURL = "https://github.com/SunkenInTime/diorama/issues"
+
+[[mods]]
+modId = "diorama"
+version = "${version}"
+displayName = "Diorama"
+description = '''A ray-traced, angled voxel map and minimap. Unofficial Forge 1.20.1 port of Diorama by Dara Adedeji.'''
+authors = "Dara Adedeji (original mod); Forge 1.20.1 port"
+displayURL = "https://modrinth.com/mod/diorama-map"
+logoFile = "assets/diorama/icon.png"
+# Client-side only: a server doesn't need it, and a client with it can join a server without it.
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.diorama]]
+modId = "forge"
+mandatory = true
+versionRange = "[${forge_version},)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.diorama]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[1.20.1,1.20.2)"
+ordering = "NONE"
+side = "BOTH"

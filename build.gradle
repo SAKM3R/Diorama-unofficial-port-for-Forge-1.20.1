@@ -1,0 +1,83 @@
+plugins {
+	id 'eclipse'
+	id 'idea'
+	id 'net.minecraftforge.gradle' version '[6.0.24,6.2)'
+	id 'org.spongepowered.mixin' version '0.7.+'
+}
+
+version = "${mod_version}+forge-${minecraft_version}"
+group = mod_group
+
+base {
+	archivesName = 'diorama'
+}
+
+// Gradle builds with JDK 21 (downloaded if it isn't installed); see java_release in gradle.properties.
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+	mappings channel: 'official', version: minecraft_version
+	copyIdeResources = true
+
+	runs {
+		client {
+			workingDirectory project.file('run')
+			property 'forge.logging.markers', 'REGISTRIES'
+			property 'forge.logging.console.level', 'info'
+			mods {
+				diorama {
+					source sourceSets.main
+				}
+			}
+		}
+	}
+}
+
+mixin {
+	add sourceSets.main, 'diorama.refmap.json'
+	config 'diorama.mixins.json'
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+	annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+	// The source marks nullable types with JSpecify. The JVM skips annotations whose class is
+	// missing, so the jar runs without it.
+	compileOnly 'org.jspecify:jspecify:1.0.0'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+	def props = [version: mod_version, forge_version: forge_version]
+	inputs.properties props
+	filesMatching(['META-INF/mods.toml']) {
+		expand props
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release = (java_release as String).toInteger()
+	options.compilerArgs.addAll(['-Xmaxerrs', '5000'])
+}
+
+tasks.named('jar', Jar).configure {
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_diorama" }
+	}
+	manifest {
+		attributes([
+			'Specification-Title'     : 'diorama',
+			'Specification-Vendor'    : 'diorama',
+			'Specification-Version'   : '1',
+			'Implementation-Title'    : project.name,
+			'Implementation-Version'  : project.version,
+			'Implementation-Vendor'   : 'diorama',
+			'MixinConfigs'            : 'diorama.mixins.json'
+		])
+	}
+	finalizedBy 'reobfJar'
+}

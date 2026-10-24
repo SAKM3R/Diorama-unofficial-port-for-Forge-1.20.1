@@ -1,0 +1,565 @@
+package dev.diorama.bake;
+
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.NaturalSpawner;
+import com.mojang.blaze3d.platform.NativeImage;
+import dev.diorama.Diorama;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.IntSupplier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.color.block.BlockColors;
+import net.minecraft.client.renderer.block.BlockModelShaper;
+import net.minecraft.client.resources.model.BakedModel;
+import org.jspecify.annotations.Nullable;
+import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraftforge.client.extensions.common.IClientFluidTypeExtensions;
+import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import net.minecraft.client.renderer.texture.SpriteContents;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.level.material.Fluid;
+
+/**
+ * What each block state looks like on the map: how rays treat it, and its average top and
+ * front colors taken from the game's own textures. Built once on the client thread, then
+ * read-only, so bake threads can use it freely.
+ */
+public final class BlockLooks {
+	public static final byte AIR = 0;
+	public static final byte SOLID = 1;
+	public static final byte WATER = 2;
+	public static final byte LAVA = 3;
+	/** See-through blocks such as glass: rays pass and pick up a tint. */
+	public static final byte GLASS = 4;
+	/** Plants without collision: rays pass and pick up partial color. */
+	public static final byte PLANT = 5;
+
+	public static final byte TINT_NONE = 0;
+	public static final byte TINT_GRASS = 1;
+	public static final byte TINT_FOLIAGE = 2;
+	public static final byte TINT_DRY_FOLIAGE = 3;
+	public static final byte TINT_WATER = 4;
+
+	private static volatile BlockLooks current;
+	/** The models the current table was built from; a resource reload replaces them. */
+	private static Object builtFrom;
+
+	public final byte[] kind;
+	public final byte[] tint;
+	public final byte[] emission;
+	/** Untinted part of the top color, as 0xRRGGBB. */
+	public final int[] top;
+	/** Part of the top color that gets multiplied by the biome tint. */
+	public final int[] topTinted;
+	public final float[] topTintWeight;
+	public final int[] side;
+	public final int[] sideTinted;
+	public final float[] sideTintWeight;
+	/** Fixed tint for blocks whose tint doesn't depend on the biome, or -1. */
+	public final int[] constantTint;
+	/** Whether a monster can spawn standing on this block (not on leaves or glass, say). */
+	public final boolean[] spawnOn;
+	/**
+	 * Whether a monster's body fits in this block's space: Minecraft's empty-spawn-block rule, and
+	 * no collision at all, since a slab at head height blocks a zombie too.
+	 */
+	public final boolean[] spawnIn;
+	/**
+	 * Index into {@link #shapes} of a solid block's outline, or 0 for a full cube: everything else,
+	 * and any block whose outline is empty, rays treat as a whole cube.
+	 */
+	public final int[] shape;
+	/**
+	 * Outlines of solid blocks smaller than a cube, such as slabs, stairs, fences and carpets: each
+	 * box as six floats (min x, y, z, then max x, y, z) in block units. Entry 0 is unused.
+	 */
+	public float[][] shapes;
+	/**
+	 * For a waterlogged block smaller than a cube, the state id of the fluid around it: rays that
+	 * pass beside the block, or reach it from above, go through that fluid.
+	 */
+	public final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap wetShapes = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+
+	private BlockLooks(int size) {
+		this.kind = new byte[size];
+		this.tint = new byte[size];
+		this.emission = new byte[size];
+		this.top = new int[size];
+		this.topTinted = new int[size];
+		this.topTintWeight = new float[size];
+		this.side = new int[size];
+		this.sideTinted = new int[size];
+		this.sideTintWeight = new float[size];
+		this.constantTint = new int[size];
+		this.spawnOn = new boolean[size];
+		this.spawnIn = new boolean[size];
+		this.shape = new int[size];
+	}
+
+	public static BlockLooks get() {
+		return current;
+	}
+
+	/**
+	 * True when two states draw the same on the map. Leaves changing their distance property,
+	 * for example, is a block update nobody can see.
+	 */
+	public boolean sameLook(int a, int b) {
+		return this.kind[a] == this.kind[b]
+			&& this.top[a] == this.top[b]
+			&& this.topTinted[a] == this.topTinted[b]
+			&& this.side[a] == this.side[b]
+			&& this.sideTinted[a] == this.sideTinted[b]
+			&& this.topTintWeight[a] == this.topTintWeight[b]
+			&& this.sideTintWeight[a] == this.sideTintWeight[b]
+			&& this.tint[a] == this.tint[b]
+			&& this.constantTint[a] == this.constantTint[b]
+			&& this.emission[a] == this.emission[b]
+			// Spawn spots show on the map too: a slab becoming a double slab changes them.
+			&& this.spawnOn[a] == this.spawnOn[b]
+			&& this.spawnIn[a] == this.spawnIn[b]
+			// Same index, same boxes: outlines are stored once each.
+			&& this.shape[a] == this.shape[b]
+			// Filling or draining a waterlogged slab changes nothing else.
+			&& this.wetShapes.get(a) == this.wetShapes.get(b);
+	}
+
+	public static void invalidate() {
+		current = null;
+	}
+
+	/** True when resource packs were reloaded since the table was built. */
+	public static boolean isStale() {
+		return current != null && builtFrom != Minecraft.getInstance().getModelManager().getMissingModel();
+	}
+
+	/** Builds the table. Must run on the client thread, after models are loaded. */
+	public static BlockLooks build() {
+		long start = System.nanoTime();
+		Minecraft mc = Minecraft.getInstance();
+		BlockModelShaper models = mc.getModelManager().getBlockModelShaper();
+		BlockColors colors = mc.getBlockColors();
+		int size = Block.BLOCK_STATE_REGISTRY.size();
+		BlockLooks looks = new BlockLooks(size);
+		Map<TextureAtlasSprite, float[]> spriteCache = new IdentityHashMap<>();
+		RandomSource random = RandomSource.create(42L);
+		TintProbe probe = new TintProbe();
+		Map<VoxelShape, Integer> shapeByVoxels = new IdentityHashMap<>();
+		Map<String, Integer> shapeByBoxes = new HashMap<>();
+		List<float[]> shapes = new ArrayList<>();
+		shapes.add(new float[0]);
+
+		for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+			int id = Block.BLOCK_STATE_REGISTRY.getId(state);
+			if (id < 0 || id >= size) {
+				continue;
+			}
+			looks.emission[id] = (byte) state.getLightEmission();
+			looks.constantTint[id] = -1;
+			// Minecraft's own spawn rules, asked of the block alone: none of them look around it.
+			try {
+				looks.spawnOn[id] = state.isValidSpawn(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, EntityType.ZOMBIE);
+				looks.spawnIn[id] = NaturalSpawner.isValidEmptySpawnBlock(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, state, state.getFluidState(), EntityType.ZOMBIE)
+					&& state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
+			} catch (RuntimeException e) {
+				looks.spawnOn[id] = false;
+				looks.spawnIn[id] = false;
+			}
+			byte kind = classify(state);
+			looks.kind[id] = kind;
+			if (kind == SOLID) {
+				looks.shape[id] = shapeIndex(state, shapeByVoxels, shapeByBoxes, shapes);
+			}
+			if (kind == AIR) {
+				continue;
+			}
+
+			BakedModel model = models.getBlockModel(state);
+			List<LegacyPart> parts = List.of(new LegacyPart(model, state, random));
+			FaceColor topFace = new FaceColor();
+			FaceColor sideFace = new FaceColor();
+			for (LegacyPart part : parts) {
+				accumulate(topFace, part.getQuads(Direction.UP), spriteCache);
+				accumulate(sideFace, part.getQuads(Direction.SOUTH), spriteCache);
+				if (sideFace.isEmpty()) {
+					accumulate(sideFace, part.getQuads(Direction.NORTH), spriteCache);
+				}
+				// Cross-shaped plants and other unculled geometry.
+				List<BakedQuad> loose = part.getQuads(null);
+				if (!loose.isEmpty()) {
+					accumulateLoose(topFace, sideFace, loose, spriteCache);
+				}
+			}
+			if (topFace.isEmpty() && sideFace.isEmpty()) {
+				// Block entities (chests, signs, beds) have no block model; use the particle texture.
+				float[] avg = spriteAverage(model.getParticleIcon(), spriteCache);
+				topFace.add(avg, -1);
+				sideFace.add(avg, -1);
+			}
+			if (topFace.isEmpty()) {
+				topFace = sideFace;
+			}
+			if (sideFace.isEmpty()) {
+				sideFace = topFace;
+			}
+			looks.top[id] = topFace.untinted();
+			looks.topTinted[id] = topFace.tinted();
+			looks.topTintWeight[id] = topFace.tintWeight();
+			looks.side[id] = sideFace.untinted();
+			looks.sideTinted[id] = sideFace.tinted();
+			looks.sideTintWeight[id] = sideFace.tintWeight();
+
+			if (kind == SOLID && !state.is(BlockTags.LEAVES) && topFace.coverage() < 0.55F) {
+				looks.kind[id] = GLASS;
+			}
+
+			// The tint layer the model's quads use, asked of the block's own tint code.
+			int tintIndex = topFace.tintIndex() >= 0 ? topFace.tintIndex() : sideFace.tintIndex();
+			if (tintIndex >= 0) {
+				Tint tint = blockTint(colors, state, tintIndex, probe);
+				looks.tint[id] = tint.kind();
+				looks.constantTint[id] = tint.constant();
+			}
+		}
+		// A fluid's block has no model of its own, so every cell holding a fluid and nothing solid
+		// (kelp and seagrass stand in water) draws as the fluid's still texture, tinted the way the
+		// fluid's own tint code asks: water by the biome.
+		Map<Fluid, FluidLook> fluidLooks = new IdentityHashMap<>();
+		for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+			int id = Block.BLOCK_STATE_REGISTRY.getId(state);
+			if (id < 0 || id >= size || looks.kind[id] != WATER) {
+				continue;
+			}
+			FluidState fluid = state.getFluidState();
+			FluidLook look = fluidLooks.computeIfAbsent(fluid.getType(), type -> fluidLook(fluid, spriteCache, probe));
+			if (look.color() < 0) {
+				// No texture to be found: keep the colour of the block's particle texture.
+				continue;
+			}
+			looks.top[id] = look.color();
+			looks.topTinted[id] = look.color();
+			looks.topTintWeight[id] = 1;
+			looks.side[id] = look.color();
+			looks.sideTinted[id] = look.color();
+			looks.sideTintWeight[id] = 1;
+			looks.tint[id] = look.tint().kind();
+			looks.constantTint[id] = look.tint().constant();
+		}
+		looks.shapes = shapes.toArray(new float[0][]);
+		looks.wetShapes.defaultReturnValue(-1);
+		for (BlockState state : Block.BLOCK_STATE_REGISTRY) {
+			int id = Block.BLOCK_STATE_REGISTRY.getId(state);
+			if (id >= 0 && id < size && looks.shape[id] != 0 && !state.getFluidState().isEmpty()) {
+				int fluid = Block.BLOCK_STATE_REGISTRY.getId(state.getFluidState().createLegacyBlock());
+				if (fluid >= 0 && fluid < size && looks.kind[fluid] == WATER) {
+					looks.wetShapes.put(id, fluid);
+				}
+			}
+		}
+		current = looks;
+		// The model shaper outlives resource reloads; the missing model is baked anew with each.
+		builtFrom = mc.getModelManager().getMissingModel();
+		Diorama.LOGGER.info("Built block colors for {} states in {} ms", size, (System.nanoTime() - start) / 1_000_000);
+		return looks;
+	}
+
+	// Before 1.21.5 a block's model gave its quads itself, for one random seed, rather than
+	// through parts. This stands in for the one part, asked the same way collectParts would.
+	private record LegacyPart(BakedModel model, BlockState state, RandomSource random) {
+		List<BakedQuad> getQuads(@Nullable Direction direction) {
+			this.random.setSeed(42L);
+			return this.model.getQuads(this.state, direction, this.random);
+		}
+	}
+
+	/** A shape with more boxes than this counts as its bounding box. */
+	private static final int MAX_BOXES = 16;
+
+	/** Finds or adds the state's outline in {@code shapes}; 0 for a full cube. */
+	private static int shapeIndex(BlockState state, Map<VoxelShape, Integer> byVoxels, Map<String, Integer> byBoxes, List<float[]> shapes) {
+		VoxelShape outline;
+		try {
+			outline = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+		} catch (RuntimeException e) {
+			return 0;
+		}
+		Integer known = byVoxels.get(outline);
+		if (known != null) {
+			return known;
+		}
+		int index = 0;
+		if (!outline.isEmpty() && outline != Shapes.block()) {
+			List<AABB> boxes = outline.toAabbs();
+			if (boxes.size() > MAX_BOXES) {
+				boxes = List.of(outline.bounds());
+			}
+			float[] flat = new float[boxes.size() * 6];
+			int n = 0;
+			boolean full = false;
+			for (AABB box : boxes) {
+				// Some mods' outlines reach into the next block; only the part in this one counts,
+				// and a box wholly outside it is dropped.
+				float[] b = {clamp01(box.minX), clamp01(box.minY), clamp01(box.minZ), clamp01(box.maxX), clamp01(box.maxY), clamp01(box.maxZ)};
+				if (b[0] >= b[3] || b[1] >= b[4] || b[2] >= b[5]) {
+					continue;
+				}
+				System.arraycopy(b, 0, flat, n, 6);
+				n += 6;
+				full |= b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 1 && b[4] == 1 && b[5] == 1;
+			}
+			float[] kept = java.util.Arrays.copyOf(flat, n);
+			if (!full && n > 0) {
+				index = byBoxes.computeIfAbsent(java.util.Arrays.toString(kept), key -> {
+					shapes.add(kept);
+					return shapes.size() - 1;
+				});
+			}
+		}
+		byVoxels.put(outline, index);
+		return index;
+	}
+
+	private static float clamp01(double v) {
+		return (float) Math.max(0, Math.min(1, v));
+	}
+
+	private static byte classify(BlockState state) {
+		if (state.isAir() || state.getRenderShape() == RenderShape.INVISIBLE && state.getFluidState().isEmpty()) {
+			return AIR;
+		}
+		FluidState fluid = state.getFluidState();
+		boolean noCollision = state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
+		if (!fluid.isEmpty() && noCollision) {
+			return fluid.is(FluidTags.LAVA) ? LAVA : WATER;
+		}
+		if (noCollision) {
+			return state.getBlock() instanceof SnowLayerBlock ? SOLID : PLANT;
+		}
+		return SOLID;
+	}
+
+	/** A fluid's colour as 0xRRGGBB, or -1 if its texture can't be found, and its tint. */
+	private record FluidLook(int color, Tint tint) {
+	}
+
+	/** Looks up the still texture and the tint the game draws a fluid with. */
+	private static FluidLook fluidLook(FluidState fluid, Map<TextureAtlasSprite, float[]> cache, TintProbe probe) {
+		TextureAtlasSprite sprite;
+		try {
+			sprite = Minecraft.getInstance().getTextureAtlas(TextureAtlas.LOCATION_BLOCKS)
+				.apply(IClientFluidTypeExtensions.of(fluid).getStillTexture());
+		} catch (RuntimeException e) {
+			sprite = null;
+		}
+		if (sprite != null && sprite.contents().name().equals(MissingTextureAtlasSprite.getLocation())) {
+			// An unregistered fluid or a missing texture: better the block's particle colour than purple.
+			sprite = null;
+		}
+		float[] avg = sprite == null ? null : spriteAverage(sprite, cache);
+		int color = avg == null || avg[3] <= 0 ? -1 : FaceColor.pack(avg[0], avg[1], avg[2]);
+		return new FluidLook(color, fluidTint(fluid, probe));
+	}
+
+	/** How a block or fluid is tinted: by a biome colour ({@code TINT_*}) or a fixed colour, -1 for none. */
+	private record Tint(byte kind, int constant) {
+		static final Tint NONE = new Tint(TINT_NONE, -1);
+
+		/**
+		 * Asks tint code for its colour in the probe's world. For a biome colour the map doesn't
+		 * blend itself (a mod's own), or code that fails in the stand-in world, it takes the code's
+		 * colour out of the world instead, as the map did before it asked in a world at all.
+		 */
+		static Tint ask(TintProbe probe, IntSupplier inWorld, IntSupplier outOfWorld) {
+			probe.reset();
+			int color;
+			try {
+				color = inWorld.getAsInt();
+			} catch (RuntimeException e) {
+				color = -1;
+			}
+			byte kind = probe.kind();
+			if (kind != TINT_NONE) {
+				return new Tint(kind, -1);
+			}
+			if (probe.askedForBiome() || color == -1) {
+				try {
+					color = outOfWorld.getAsInt();
+				} catch (RuntimeException e) {
+					return NONE;
+				}
+			}
+			// -1 (no tint code) and white both leave the texture as it is.
+			return (color & 0xFFFFFF) == 0xFFFFFF ? NONE : new Tint(TINT_NONE, color & 0xFFFFFF);
+		}
+	}
+
+	/** Asks a block's tint code how one tint layer is coloured. */
+	private static Tint blockTint(BlockColors colors, BlockState state, int index, TintProbe probe) {
+		return Tint.ask(probe, () -> colors.getColor(state, probe, BlockPos.ZERO, index), () -> colors.getColor(state, null, null, index));
+	}
+
+	/** The same for a fluid's tint code. */
+	private static Tint fluidTint(FluidState fluid, TintProbe probe) {
+		try {
+			IClientFluidTypeExtensions extensions = IClientFluidTypeExtensions.of(fluid);
+			return Tint.ask(probe, () -> extensions.getTintColor(fluid, probe, BlockPos.ZERO), extensions::getTintColor);
+		} catch (RuntimeException e) {
+			return Tint.NONE;
+		}
+	}
+
+	private static void accumulate(FaceColor face, List<BakedQuad> quads, Map<TextureAtlasSprite, float[]> cache) {
+		for (BakedQuad quad : quads) {
+			face.add(spriteAverage(quad.getSprite(), cache), quad.getTintIndex());
+		}
+	}
+
+	private static void accumulateLoose(FaceColor top, FaceColor side, List<BakedQuad> quads, Map<TextureAtlasSprite, float[]> cache) {
+		for (BakedQuad quad : quads) {
+			float[] avg = spriteAverage(quad.getSprite(), cache);
+			int tintIndex = quad.getTintIndex();
+			if (quad.getDirection() == Direction.UP || quad.getDirection() == Direction.DOWN) {
+				top.add(avg, tintIndex);
+			} else {
+				top.add(avg, tintIndex);
+				side.add(avg, tintIndex);
+			}
+		}
+	}
+
+	/** Returns {r, g, b, coverage} averaged over the sprite's visible pixels, colors in 0..1. */
+	private static float[] spriteAverage(TextureAtlasSprite sprite, Map<TextureAtlasSprite, float[]> cache) {
+		return cache.computeIfAbsent(sprite, s -> {
+			SpriteContents contents = s.contents();
+			NativeImage image = ((dev.diorama.mixin.SpriteContentsAccessor) contents).diorama$originalImage();
+			if (image == null) {
+				return new float[] {1.0F, 0.0F, 1.0F, 1.0F};
+			}
+			int w = Math.min(contents.width(), image.getWidth());
+			int h = Math.min(contents.height(), image.getHeight());
+			double r = 0;
+			double g = 0;
+			double b = 0;
+			double weight = 0;
+			int visible = 0;
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					// Only the ABGR getter existed; swap red and blue.
+					int abgr = image.getPixelRGBA(x, y);
+					int argb = (abgr & 0xFF00FF00) | (abgr >> 16 & 0xFF) | (abgr & 0xFF) << 16;
+					int a = argb >>> 24;
+					if (a < 26) {
+						continue;
+					}
+					double wa = a / 255.0;
+					// Average in linear light so bright and dark pixels mix the way they look.
+					r += srgbToLinear((argb >> 16) & 0xFF) * wa;
+					g += srgbToLinear((argb >> 8) & 0xFF) * wa;
+					b += srgbToLinear(argb & 0xFF) * wa;
+					weight += wa;
+					visible++;
+				}
+			}
+			if (weight == 0) {
+				return new float[] {0.0F, 0.0F, 0.0F, 0.0F};
+			}
+			return new float[] {
+				(float) linearToSrgb(r / weight), (float) linearToSrgb(g / weight), (float) linearToSrgb(b / weight),
+				(float) visible / (w * h)
+			};
+		});
+	}
+
+	private static double srgbToLinear(int c) {
+		double v = c / 255.0;
+		return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+	}
+
+	private static double linearToSrgb(double v) {
+		return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+	}
+
+	/** Running average of the quads that make up one face direction. */
+	private static final class FaceColor {
+		private float ur, ug, ub, uw;
+		private float tr, tg, tb, tw;
+		private float coverage;
+		private int count;
+		/** The first tint layer a quad asked for, or -1. */
+		private int tintIndex = -1;
+
+		void add(float[] avg, int tintIndex) {
+			float w = avg[3];
+			if (w <= 0) {
+				return;
+			}
+			if (tintIndex >= 0) {
+				if (this.tintIndex < 0) {
+					this.tintIndex = tintIndex;
+				}
+				this.tr += avg[0] * w;
+				this.tg += avg[1] * w;
+				this.tb += avg[2] * w;
+				this.tw += w;
+			} else {
+				this.ur += avg[0] * w;
+				this.ug += avg[1] * w;
+				this.ub += avg[2] * w;
+				this.uw += w;
+			}
+			this.coverage = Math.max(this.coverage, w);
+			this.count++;
+		}
+
+		boolean isEmpty() {
+			return this.count == 0;
+		}
+
+		float coverage() {
+			return this.coverage;
+		}
+
+		int tintIndex() {
+			return this.tintIndex;
+		}
+
+		int untinted() {
+			return this.uw == 0 ? 0 : pack(this.ur / this.uw, this.ug / this.uw, this.ub / this.uw);
+		}
+
+		int tinted() {
+			return this.tw == 0 ? 0 : pack(this.tr / this.tw, this.tg / this.tw, this.tb / this.tw);
+		}
+
+		float tintWeight() {
+			float total = this.uw + this.tw;
+			return total == 0 ? 0 : this.tw / total;
+		}
+
+		private static int pack(float r, float g, float b) {
+			return (clamp255(r) << 16) | (clamp255(g) << 8) | clamp255(b);
+		}
+
+		private static int clamp255(float v) {
+			return Math.max(0, Math.min(255, Math.round(v * 255)));
+		}
+	}
+}
