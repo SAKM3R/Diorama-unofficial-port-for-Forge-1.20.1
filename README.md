@@ -1,29 +1,70 @@
-# Diorama — Forge 1.20.1 port
+# Diorama для Forge 1.20.1
 
-Unofficial port of [Diorama](https://github.com/SunkenInTime/diorama) by Dara Adedeji (MIT) from
-Fabric/NeoForge 1.21.1 to **Minecraft 1.20.1, Forge 47.3.0+, Java 21**. Client-side only.
+Неофициальный порт мода [Diorama](https://github.com/SunkenInTime/diorama) (автор — Dara Adedeji, лицензия MIT)
+с Fabric/NeoForge 1.21.1 на **Minecraft 1.20.1 + Forge**. Мод только клиентский.
 
-Diorama draws your world as an angled, ray-traced voxel map: a minimap and a fullscreen map
-(`M`), waypoints (`B`, `U`), radar, cave slices, overlays and a saved map per world.
+*Unofficial Forge 1.20.1 port of Diorama — a ray-traced, angled voxel map and minimap. Client-side only.*
 
-## Differences from the original
+Diorama рисует мир как наклонную воксельную карту, похожую на макет на столе: тени от низкого солнца,
+затенение под деревьями и в ущельях, глубина воды, анимированный туман над неразведанными местами.
 
-- **GPU baking** (an experiment, off by default upstream) is not available: it needs the GPU API of
-  Minecraft 1.21.5+. Every tile is traced on the CPU, as upstream does by default.
-- Mobs that only exist from 1.21 (Bogged, Breeze) are not in the radar's face list.
-- Settings open from the mod list's **Config** button (Forge) or the button on the fullscreen map.
-- Screens use 1.20.1's GUI art (no sprites or blurred backgrounds existed then).
+## Скачать
 
-## Building
+Готовый jar — на странице [Releases](../../releases/latest). Положите его в папку `mods`.
 
-GitHub Actions builds the jar on every push (`.github/workflows/build.yml`): open the run on the
-**Actions** tab and download the `diorama-forge-1.20.1` artifact.
+| Требование | Версия |
+|---|---|
+| Minecraft | 1.20.1 |
+| Forge | 47.3.0 или новее |
+| Java | 17 или новее (проверено на 21) |
 
-Locally: JDK 21 and `gradle build` (Gradle 8.8) or `./gradlew build`. The jar is in `build/libs/`.
+На сервер ставить не нужно: с модом можно заходить на серверы без него.
 
-The class files target Java 17 by default (`java_release` in `gradle.properties`), because the
-Mixin version Forge 1.20.1 ships doesn't know newer compatibility levels. The mod runs on Java 21.
+## Возможности
 
-## License
+- **Миникарта** в выбранном углу экрана: компас, координаты, биом. `=` / `-` меняют масштаб.
+- **Полноэкранная карта** (`M`): перетаскивание, масштаб колёсиком, от отдельных блоков до ~10 000 блоков.
+- **Пещеры** (`C`, `PgUp`/`PgDn`): срез пещер под игроком, освещённый светом блоков.
+- **Путевые точки**: `B` — поставить, `U` — список. Папки, цвета, метки в мире, отметка места смерти,
+  обмен через чат в формате Xaero's Minimap и импорт точек из Xaero's.
+- **Радар** игроков и мобов с их лицами, рамка по типу (враждебный, нейтральный, мирный).
+- **Сохранённая карта** для каждого мира и измерения в `.minecraft/diorama/`.
+- **Оверлеи**: сетка чанков, слайм-чанки (в одиночной игре), места спавна мобов.
+- **Нижний мир** без потолка, с дымкой биомов.
+- **Настройки** — кнопка Settings на большой карте или Config в списке модов.
 
-MIT, as the original: see `LICENSE`.
+## Отличия от оригинала
+
+- Нет экспериментальной **отрисовки тайлов на видеокарте**: ей нужен графический API Minecraft 1.21.5+.
+  Все тайлы считаются на процессоре, как и в оригинале по умолчанию.
+- В радаре нет лиц болотника и вихря: в 1.20.1 этих мобов нет.
+- Экраны мода нарисованы средствами 1.20.1 (в ней нет спрайтов интерфейса и размытого фона).
+- На серверах с плагинами Xaero при первом заходе карта может сохраниться по сиду мира, а не по ID,
+  который присылает сервер. Со следующего захода папка выбирается правильно.
+
+## Совместимость
+
+Проверено в большой сборке (≈280 модов) вместе с **Oculus** (с шейдерами и без), **Embeddium**,
+**ImmediatelyFast** и **ModernFix**. Порт сам восстанавливает состояние OpenGL, которое меняют эти моды:
+привязку текстур и режим смешивания.
+
+При входе в мир мод один раз строит таблицу цветов всех блоков. В больших сборках это занимает несколько
+секунд (≈5–8 с на 280 модов), игра в это время подвисает.
+
+## Сборка из исходников
+
+Нужен JDK 21 и Gradle 8.8:
+
+```
+gradle build
+```
+
+jar появится в `build/libs/`. GitHub Actions собирает мод на каждый push (`.github/workflows/build.yml`);
+лог и jar последней сборки лежат в ветке `ci-logs`.
+
+Класс-файлы по умолчанию в формате Java 17 (`java_release` в `gradle.properties`): Mixin, который идёт
+с Forge 1.20.1, не знает уровней совместимости новее. На Java 21 мод работает так же.
+
+## Лицензия
+
+MIT, как и оригинал — см. `LICENSE`. Оригинальный мод: https://github.com/SunkenInTime/diorama
