@@ -17,7 +17,7 @@ public abstract class DeathPacketMixin {
 	@Inject(method = "handlePlayerCombatKill", at = @At("TAIL"))
 	private void diorama$onDeath(ClientboundPlayerCombatKillPacket packet, CallbackInfo ci) {
 		Minecraft mc = Minecraft.getInstance();
-		if (mc.player != null && packet.playerId() == mc.player.getId()) {
+		if (mc.player != null && packet.getPlayerId() == mc.player.getId()) {
 			Waypoints.died(mc.player);
 		}
 	}

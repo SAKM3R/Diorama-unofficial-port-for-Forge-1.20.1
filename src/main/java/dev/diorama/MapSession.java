@@ -350,7 +350,8 @@ public final class MapSession {
 			long key = entry.getKey();
 			int cx = (int) (key >> 32);
 			int cz = (int) key;
-			if (this.level.getChunkSource().getChunk(cx, cz, ChunkStatus.FULL, false) instanceof LevelChunk chunk) {
+			LevelChunk chunk = this.level.getChunkSource().getChunk(cx, cz, ChunkStatus.FULL, false);
+			if (chunk != null) {
 				boolean known = this.map.chunk(cx, cz) != null;
 				this.map.put(ChunkSnapshot.take(chunk, this.level), known ? p.box : null, playerChunkX, playerChunkZ);
 				budget--;
