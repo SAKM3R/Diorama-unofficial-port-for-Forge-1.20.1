@@ -1,6 +1,7 @@
 {
     "vertex": "diorama_fog",
     "fragment": "diorama_fog",
+    "attributes": [ "Position", "UV0", "Color" ],
     "samplers": [
         { "name": "Sampler0" },
         { "name": "Sampler1" }
