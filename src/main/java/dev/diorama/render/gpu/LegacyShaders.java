@@ -74,6 +74,8 @@ final class LegacyShaders {
 		RenderSystem.disableDepthTest();
 		RenderSystem.disableCull();
 		RenderSystem.depthMask(false);
+		// The shader binds its textures as it's applied; make sure those binds really happen.
+		GlBindings.reset(GlBindings.UNITS);
 		BufferUploader.drawWithShader(mesh);
 		RenderSystem.depthMask(true);
 		RenderSystem.enableCull();

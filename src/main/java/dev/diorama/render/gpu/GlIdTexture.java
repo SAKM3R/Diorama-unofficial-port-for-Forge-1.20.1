@@ -15,6 +15,8 @@ public final class GlIdTexture implements LegacyTexture {
 
 	GlIdTexture(int size, int levels) {
 		this.id = TextureUtil.generateTextureId();
+		// prepareImage binds through Minecraft's copy of the bindings; make sure that bind happens.
+		GlBindings.reset(1);
 		// Allocates every mip level and limits sampling to them.
 		TextureUtil.prepareImage(NativeImage.InternalGlFormat.RGBA, this.id, levels - 1, size, size);
 	}
@@ -24,7 +26,7 @@ public final class GlIdTexture implements LegacyTexture {
 		ByteBuffer buffer = MemoryUtil.memAlloc(edge * edge * 4).order(ByteOrder.LITTLE_ENDIAN);
 		try {
 			buffer.asIntBuffer().put(abgr, 0, edge * edge);
-			GlStateManager._bindTexture(this.id);
+			GlBindings.bindForUpdate(this.id);
 			// Rows packed tightly from the start of the buffer.
 			GlStateManager._pixelStore(3314, 0);
 			GlStateManager._pixelStore(3316, 0);
@@ -39,7 +41,7 @@ public final class GlIdTexture implements LegacyTexture {
 
 	@Override
 	public void bind(int slot, Sampling sampling) {
-		GlStateManager._bindTexture(this.id);
+		GlBindings.bindForUpdate(this.id);
 		// Minify: LINEAR_MIPMAP_LINEAR or LINEAR. Magnify: NEAREST or LINEAR.
 		GlStateManager._texParameter(TEXTURE_2D, 10241, sampling.mipmapped() ? 9987 : 9729);
 		GlStateManager._texParameter(TEXTURE_2D, 10240, sampling.crisp() ? 9728 : 9729);
@@ -54,7 +56,7 @@ public final class GlIdTexture implements LegacyTexture {
 	public int[] readBack(int level, int edge) {
 		ByteBuffer buffer = MemoryUtil.memAlloc(edge * edge * 4).order(ByteOrder.LITTLE_ENDIAN);
 		try {
-			GlStateManager._bindTexture(this.id);
+			GlBindings.bindForUpdate(this.id);
 			GlStateManager._pixelStore(3333, 4);
 			org.lwjgl.opengl.GL11.glGetTexImage(TEXTURE_2D, level, 6408, 5121, buffer);
 			int[] out = new int[edge * edge];
