@@ -104,7 +104,15 @@ final class LegacyShaders {
 			lastFast = fast;
 			fogDiagnosed = 0;
 		}
-		if (fogDiagnosed >= 2 || fogShader == null) {
+		if (fogDiagnosed >= 2 || fogShader == null || !(mask instanceof GlIdTexture probe)) {
+			draw(FOG, mesh);
+			return;
+		}
+		// Only over known ground, where the fog should let the map through.
+		int[] middle = probe.readBack(0, 256);
+		int mx = Math.max(0, Math.min(255, (int) (maskU * 256)));
+		int my = Math.max(0, Math.min(255, (int) (maskV * 256)));
+		if ((middle[my * 256 + mx] & 0xFF) != 0xFF) {
 			draw(FOG, mesh);
 			return;
 		}
