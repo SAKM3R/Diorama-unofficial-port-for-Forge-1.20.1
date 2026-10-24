@@ -55,8 +55,6 @@ public final class MapScreen extends Screen {
 	private static final String HELP = "Drag to pan · Scroll to zoom · Right-click for options";
 	/** One press of a zoom button: two notches of the mouse wheel. */
 	private static final int ZOOM_BUTTON_STEPS = 2;
-	/** Vanilla's tab texture: four 130 x 24 states stacked, selected, selected and hovered, plain, hovered. */
-	private static final ResourceLocation TABS = new ResourceLocation("textures/gui/tab_button.png");
 	private static final Component[] TAB_NAMES = {Component.translatable("diorama.map.surface"), Component.translatable("diorama.map.caves")};
 
 	private final MapViewport viewport = new MapViewport();
@@ -654,8 +652,7 @@ public final class MapScreen extends Screen {
 			int w = nameWidth + 13;
 			int h = selected ? BAR + 2 : BAR;
 			boolean hovered = this.menu == null && mouseX >= x && mouseX < x + w && mouseY >= 0 && mouseY < h;
-			int state = selected ? (hovered ? 1 : 0) : (hovered ? 3 : 2);
-			graphics.blitNineSliced(TABS, x, 0, w, h, 2, 2, 2, 0, 130, 24, 0, state * 24);
+			tab(graphics, x, w, h, selected, hovered);
 			if (selected) {
 				int underline = nameWidth - 1;
 				graphics.fill(x + (w - underline) / 2, h - 3, x + (w - underline) / 2 + underline, h - 2, 0xFFFFFFFF);
@@ -666,6 +663,21 @@ public final class MapScreen extends Screen {
 			x += w;
 		}
 		this.tabsEnd = x;
+	}
+
+	/**
+	 * One tab, drawn with fills in the colours of vanilla's tab texture: a dark outline, a light
+	 * bevel on top and the left, a darker body when not selected, lighter while hovered. Fills
+	 * rather than vanilla's nine-sliced texture, whose 1.20.1 code can't stretch it this short.
+	 */
+	private static void tab(GuiGraphics graphics, int x, int w, int h, boolean selected, boolean hovered) {
+		int x1 = x + w;
+		graphics.fill(x, 0, x1, h, 0xFF000000);
+		int body = selected ? (hovered ? 0xFF8C8C8C : 0xFF6F6F6F) : (hovered ? 0xFF5C5C5C : 0xFF3A3A3A);
+		graphics.fill(x + 1, 1, x1 - 1, h, body);
+		int light = selected ? 0xFFB0B0B0 : 0xFF6A6A6A;
+		graphics.fill(x + 1, 1, x1 - 1, 2, light);
+		graphics.fill(x + 1, 2, x + 2, h, light);
 	}
 
 	/** The tab under a point: 0 Surface, 1 Caves, -1 neither. */
