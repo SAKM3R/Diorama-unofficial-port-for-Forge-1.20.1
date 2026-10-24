@@ -67,6 +67,16 @@ final class LegacyShaders {
 	static void draw(Supplier<ShaderInstance> shader, BufferBuilder.RenderedBuffer mesh) {
 		boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
 		RenderSystem.setShader(shader);
+		// Applying a 1.20.1 shader applies its blend mode, which turns blending off for a shader
+		// without one when the last one applied (another mod's, often) had one. Apply it first, so
+		// the draw's own apply changes nothing, then set blending as the map needs it.
+		ShaderInstance instance = shader.get();
+		if (instance != null) {
+			for (int i = 0; i < GlBindings.UNITS; i++) {
+				instance.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
+			}
+			instance.apply();
+		}
 		RenderSystem.enableBlend();
 		RenderSystem.blendFuncSeparate(
 			GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
@@ -88,79 +98,6 @@ final class LegacyShaders {
 
 	static void drawFog(BufferBuilder.RenderedBuffer mesh) {
 		draw(FOG, mesh);
-	}
-
-	private static int fogDiagnosed;
-	private static boolean lastFast;
-
-	/**
-	 * The fog, logging what the GPU sees for the first draws at each quality: the program's
-	 * attribute and sampler locations, the bound textures, the mask under the middle of the view,
-	 * and the screen pixel there before and after the fog.
-	 */
-	static void drawFog(BufferBuilder.RenderedBuffer mesh, MapTexture mask, MapTexture noise, float guiX, float guiY, float maskU, float maskV, int params) {
-		boolean fast = (params >>> 24 & 15) >= 2;
-		if (fast != lastFast) {
-			lastFast = fast;
-			fogDiagnosed = 0;
-		}
-		if (fogDiagnosed >= 2 || fogShader == null || !(mask instanceof GlIdTexture probe)) {
-			draw(FOG, mesh);
-			return;
-		}
-		// Only over known ground, where the fog should let the map through.
-		int[] middle = probe.readBack(0, 256);
-		int mx = Math.max(0, Math.min(255, (int) (maskU * 256)));
-		int my = Math.max(0, Math.min(255, (int) (maskV * 256)));
-		if ((middle[my * 256 + mx] & 0xFF) != 0xFF) {
-			draw(FOG, mesh);
-			return;
-		}
-		fogDiagnosed++;
-		int program = fogShader.getId();
-		String attributes = "Position " + org.lwjgl.opengl.GL20.glGetAttribLocation(program, "Position")
-			+ ", UV0 " + org.lwjgl.opengl.GL20.glGetAttribLocation(program, "UV0")
-			+ ", Color " + org.lwjgl.opengl.GL20.glGetAttribLocation(program, "Color");
-		String uniforms = "Sampler0 " + org.lwjgl.opengl.GL20.glGetUniformLocation(program, "Sampler0")
-			+ ", Sampler1 " + org.lwjgl.opengl.GL20.glGetUniformLocation(program, "Sampler1")
-			+ ", GameTime " + org.lwjgl.opengl.GL20.glGetUniformLocation(program, "GameTime")
-			+ ", ColorModulator " + org.lwjgl.opengl.GL20.glGetUniformLocation(program, "ColorModulator");
-		String maskInfo = "n/a";
-		if (mask instanceof GlIdTexture gl) {
-			int[] texels = gl.readBack(0, 256);
-			int full = 0;
-			int clear = 0;
-			int deep = 0;
-			for (int t : texels) {
-				full += (t & 0xFF) == 0xFF ? 1 : 0;
-				clear += (t >> 8 & 0xFF) == 0xFF ? 1 : 0;
-				deep += (t >> 16 & 0xFF) == 0xFF ? 1 : 0;
-			}
-			int tx = Math.max(0, Math.min(255, (int) (maskU * 256)));
-			int ty = Math.max(0, Math.min(255, (int) (maskV * 256)));
-			maskInfo = "known " + full + ", clear " + clear + ", deep " + deep + " of 65536, middle texel " + Integer.toHexString(texels[ty * 256 + tx]);
-		}
-		com.mojang.blaze3d.platform.Window window = Minecraft.getInstance().getWindow();
-		double scale = window.getGuiScale();
-		int px = (int) (guiX * scale);
-		int py = window.getHeight() - 1 - (int) (guiY * scale);
-		int before = readPixel(px, py);
-		draw(FOG, mesh);
-		int after = readPixel(px, py);
-		LOGGER.info("Diorama fog diagnostics ({}): program {}, attributes [{}], uniforms [{}], textures bound {} {} (mask {}, noise {}), mask {}, params {}, pixel at {},{} before {} after {}, GL error {}",
-			fast ? "fast" : "fancy", program, attributes, uniforms, RenderSystem.getShaderTexture(0), RenderSystem.getShaderTexture(1),
-			((GlIdTexture) mask).id(), ((GlIdTexture) noise).id(), maskInfo, Integer.toHexString(params), px, py,
-			Integer.toHexString(before), Integer.toHexString(after), GL11.glGetError());
-	}
-
-	private static int readPixel(int x, int y) {
-		java.nio.ByteBuffer buffer = org.lwjgl.system.MemoryUtil.memAlloc(4);
-		try {
-			GL11.glReadPixels(x, y, 1, 1, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
-			return buffer.getInt(0);
-		} finally {
-			org.lwjgl.system.MemoryUtil.memFree(buffer);
-		}
 	}
 
 	private LegacyShaders() {

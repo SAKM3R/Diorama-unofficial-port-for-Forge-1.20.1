@@ -34,7 +34,6 @@ public final class MapTile {
 			for (int level = 0; level < Mipmaps.LEVELS; level++) {
 				this.texture.write(level, 0, 0, size >> level, image.mips()[level]);
 			}
-			diagnose(image, this.texture);
 			return;
 		}
 		if (this.coverage == null) {
@@ -135,63 +134,6 @@ public final class MapTile {
 			return 0x7040F050;
 		}
 		return 0;
-	}
-
-	private static int diagnosed;
-
-	/**
-	 * Logs what the first few full tiles hold on the CPU and what the GPU texture holds after the
-	 * upload, so a map drawn wrong can be told apart from a map baked wrong.
-	 */
-	private static void diagnose(TileImage image, MapTexture texture) {
-		if (diagnosed >= 3) {
-			return;
-		}
-		int[] pixels = image.mips()[0];
-		int known = 0;
-		long r = 0;
-		long g = 0;
-		long b = 0;
-		java.util.Set<Integer> distinct = new java.util.HashSet<>();
-		java.util.List<String> samples = new java.util.ArrayList<>();
-		for (int i = 0; i < pixels.length; i++) {
-			int p = pixels[i];
-			if (p >>> 24 == 0) {
-				continue;
-			}
-			known++;
-			r += p & 0xFF;
-			g += p >> 8 & 0xFF;
-			b += p >> 16 & 0xFF;
-			if (distinct.size() < 1000) {
-				distinct.add(p);
-			}
-			if (samples.size() < 6 && i % 997 == 0) {
-				samples.add(Integer.toHexString(p));
-			}
-		}
-		if (known < 1000) {
-			return;
-		}
-		diagnosed++;
-		String gpu = "n/a";
-		int error = org.lwjgl.opengl.GL11.glGetError();
-		if (texture instanceof dev.diorama.render.gpu.GlIdTexture gl) {
-			int[] back = gl.readBack(0, Projection.TILE_PIXELS);
-			int same = 0;
-			java.util.List<String> backSamples = new java.util.ArrayList<>();
-			for (int i = 0; i < back.length; i++) {
-				if (back[i] == pixels[i]) {
-					same++;
-				}
-				if (backSamples.size() < 6 && i % 997 == 0 && pixels[i] >>> 24 != 0) {
-					backSamples.add(Integer.toHexString(back[i]));
-				}
-			}
-			gpu = same + "/" + back.length + " texels match, samples " + backSamples;
-		}
-		dev.diorama.Diorama.LOGGER.info("Diorama diagnostics: tile {} has {} known pixels, average RGB {} {} {}, {} distinct colours, samples (ABGR) {}; GPU: {}; GL error before readback {}",
-			image.key(), known, r / known, g / known, b / known, distinct.size(), samples, gpu, error);
 	}
 
 	/** Creates the GPU texture if needed; true if it was just created. */

@@ -278,15 +278,6 @@ public final class BlockLooks {
 		// The model shaper outlives resource reloads; the missing model is baked anew with each.
 		builtFrom = mc.getModelManager().getMissingModel();
 		Diorama.LOGGER.info("Built block colors for {} states in {} ms", size, (System.nanoTime() - start) / 1_000_000);
-		for (BlockState sample : new BlockState[] {
-			net.minecraft.world.level.block.Blocks.GRASS_BLOCK.defaultBlockState(), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),
-			net.minecraft.world.level.block.Blocks.WATER.defaultBlockState(), net.minecraft.world.level.block.Blocks.OAK_LEAVES.defaultBlockState(),
-			net.minecraft.world.level.block.Blocks.SAND.defaultBlockState()}) {
-			int id = Block.BLOCK_STATE_REGISTRY.getId(sample);
-			Diorama.LOGGER.info("Diorama diagnostics: {} kind {} top {} tinted {} weight {} side {} tint kind {} constant {}", sample.getBlock(),
-				looks.kind[id], Integer.toHexString(looks.top[id]), Integer.toHexString(looks.topTinted[id]), looks.topTintWeight[id],
-				Integer.toHexString(looks.side[id]), looks.tint[id], Integer.toHexString(looks.constantTint[id]));
-		}
 		return looks;
 	}
 
