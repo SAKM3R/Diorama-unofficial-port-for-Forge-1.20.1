@@ -52,6 +52,10 @@ public final class GlIdTexture implements LegacyTexture {
 		RenderSystem.setShaderTexture(slot, this.id);
 	}
 
+	int id() {
+		return this.id;
+	}
+
 	/** Reads one mip level back from the GPU, for the diagnostics log. */
 	public int[] readBack(int level, int edge) {
 		ByteBuffer buffer = MemoryUtil.memAlloc(edge * edge * 4).order(ByteOrder.LITTLE_ENDIAN);

@@ -66,7 +66,9 @@ final class ImmediateCanvas implements MapCanvas {
 		this.rect(mesh, x, y, x + width, y + height, u0, v0, u1, v1, params);
 		((LegacyTexture) mask).bind(0, Sampling.CLAMP_LINEAR);
 		((LegacyTexture) noise).bind(1, Sampling.REPEAT_LINEAR);
-		LegacyShaders.drawFog(mesh.end());
+		float[] centre = {x + width / 2.0F, y + height / 2.0F};
+		org.joml.Vector4f at = this.graphics.pose().last().pose().transform(new org.joml.Vector4f(centre[0], centre[1], 0, 1));
+		LegacyShaders.drawFog(mesh.end(), mask, noise, at.x, at.y, (u0 + u1) / 2, (v0 + v1) / 2, params);
 		unbind(0);
 		unbind(1);
 	}
